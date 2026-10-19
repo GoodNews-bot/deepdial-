@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>DeepDial V2</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#0f172a">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--text:#f8fafc;--muted:#94a3b8;--primary:#3b82f6;--primary-h:#2563eb;--success:#10b981;--danger:#ef4444;--warn:#f59e0b;--border:#334155;--accent:#a78bfa;}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:20px;min-height:100vh;}
+.container{max-width:1000px;margin:0 auto;display:flex;flex-direction:column;gap:18px;}
+header{text-align:center;margin-bottom:10px;}
+h1{margin:0;font-size:2.1rem;background:linear-gradient(to right,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.subtitle{color:var(--muted);margin:5px 0 0;font-size:.95rem;}
+.tabs{display:flex;gap:6px;background:var(--panel);padding:6px;border-radius:10px;border:1px solid var(--border);}
+.tab{flex:1;padding:10px;border:none;background:transparent;color:var(--muted);font-size:.95rem;font-weight:600;border-radius:8px;cursor:pointer;transition:all .2s;}
+.tab.active{background:var(--primary);color:#fff;}
+.tab:hover:not(.active){background:#33415588;}
+.pane{display:none;flex-direction:column;gap:14px;}
+.pane.active{display:flex;}
+.dropzone{background:var(--panel);border:2px dashed var(--border);border-radius:12px;padding:36px 20px;text-align:center;cursor:pointer;transition:all .2s;position:relative;}
+.dropzone:hover,.dropzone.dragover{border-color:var(--primary);background:#1e293bdd;}
+.dropzone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.dropzone .icon{font-size:2.8rem;display:block;margin-bottom:10px;}
+.dropzone h3{margin:0 0 6px;font-size:1.1rem;}
+.dropzone p{margin:0;color:var(--muted);font-size:.85rem;}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
+.stat .label{color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.5px;}
+.stat .value{font-size:1.4rem;font-weight:700;margin-top:4px;}
+.tree-panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;max-height:340px;overflow-y:auto;display:none;}
+.tree-panel.active{display:block;}
+.tree-header{padding:10px 14px;border-bottom:1px solid var(--border);font-size:.85rem;color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel);z-index:1;}
+.tree-list{padding:10px 14px;font-family:'Consolas','Monaco',monospace;font-size:.82rem;line-height:1.7;}
+.tree-file{display:flex;justify-content:space-between;gap:12px;padding:2px 0;}
+.tree-file .path{color:var(--text);word-break:break-all;}
+.tree-file .path.binary{color:var(--warn);}
+.tree-file .size{color:var(--muted);flex-shrink:0;}
+.log-panel{background:var(--panel);border-radius:12px;padding:14px;border:1px solid var(--border);min-height:100px;max-height:220px;overflow-y:auto;font-family:'Consolas',monospace;font-size:.85rem;display:flex;flex-direction:column;gap:4px;}
+.log-info{color:var(--muted);}
+.log-success{color:var(--success);background:#10b98111;border-left:3px solid var(--success);padding:4px 8px;border-radius:4px;}
+.log-warn{color:var(--warn);background:#f59e0b11;border-left:3px solid var(--warn);padding:4px 8px;border-radius:4px;}
+.log-error{color:var(--danger);background:#ef444411;border-left:3px solid var(--danger);padding:4px 8px;border-radius:4px;}
+.status{text-align:center;font-weight:600;padding:10px;border-radius:8px;background:var(--panel);display:none;}
+.status.active{display:block;}
+.status.working{color:var(--primary);}
+.status.done{color:var(--success);}
+.status.error{color:var(--danger);}
+.actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
+.btn{padding:10px 20px;border:none;border-radius:8px;font-size:.95rem;font-weight:600;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:8px;}
+.btn-primary{background:var(--primary);color:#fff;}.btn-primary:hover{background:var(--primary-h);}
+.btn-success{background:var(--success);color:#fff;}.btn-success:hover{background:#059669;}
+.btn-secondary{background:var(--panel);color:var(--text);border:1px solid var(--border);}.btn-secondary:hover{background:var(--border);}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+footer{margin-top:20px;padding-top:20px;border-top:1px solid var(--border);text-align:center;}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>DeepDial V2</h1>
+    <p class="subtitle">Convertisseur local ZIP ⇄ TXT</p>
+  </header>
+  <div class="tabs">
+    <button class="tab active" data-pane="extract">📦 ZIP → TXT</button>
+    <button class="tab" data-pane="rebuild">📝 TXT → ZIP</button>
+  </div>
+  <div id="status" class="status"></div>
+
+  <div class="pane active" id="pane-extract">
+    <div class="dropzone" id="dropZip">
+      <input type="file" id="fileZip" accept=".zip">
+      <span class="icon">📦</span>
+      <h3>Dépose un projet .zip</h3>
+      <p>Le fichier TXT sera généré au format DeepDial</p>
+    </div>
+    <div class="stats" id="statsExtract" style="display:none">
+      <div class="stat"><div class="label">Fichiers texte</div><div class="value" id="sExtractText">0</div></div>
+      <div class="stat"><div class="label">Binaires ignorés</div><div class="value" id="sExtractBin">0</div></div>
+      <div class="stat"><div class="label">Taille ZIP</div><div class="value" id="sExtractZip">0</div></div>
+      <div class="stat"><div class="label">Taille TXT</div><div class="value" id="sExtractTxt">0</div></div>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-rebuild">
+    <div class="dropzone" id="dropTxt">
+      <input type="file" id="fileTxt" accept=".txt">
+      <span class="icon">📝</span>
+      <h3>Dépose un fichier .txt DeepDial</h3>
+      <p>L'arborescence sera analysée puis reconstruite en ZIP</p>
+    </div>
+    <div class="stats" id="statsRebuild" style="display:none">
+      <div class="stat"><div class="label">Fichiers</div><div class="value" id="sRebuildFiles">0</div></div>
+      <div class="stat"><div class="label">Taille totale</div><div class="value" id="sRebuildSize">0</div></div>
+      <div class="stat"><div class="label">Binaires</div><div class="value" id="sRebuildBin">0</div></div>
+      <div class="stat"><div class="label">Avertissements</div><div class="value" id="sRebuildWarn">0</div></div>
+    </div>
+    <div class="tree-panel" id="treePanel">
+      <div class="tree-header">Aperçu de l'arborescence</div>
+      <div class="tree-list" id="treeList"></div>
+    </div>
+    <div class="actions" id="rebuildActions" style="display:none">
+      <button class="btn btn-success" id="btnGenerate">✅ Générer le ZIP</button>
+      <button class="btn btn-secondary" id="btnCancel">✖ Annuler</button>
+    </div>
+  </div>
+
+  <div class="log-panel" id="logPanel">
+    <div class="log-info">Prêt.</div>
+  </div>
+
+  <footer>
+    <button class="btn btn-secondary" id="btnCopySkill">📋 Copier le Skill.md</button>
+  </footer>
+</div>
+
+<script>
+// Enregistrement du Service Worker pour la PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    // On utilise './sw.js' pour être sûr qu'il cherche dans le sous-dossier
+    navigator.serviceWorker.register('./sw.js')
+      .then(registration => console.log('SW registered:', registration.scope))
+      .catch(err => console.log('SW registration failed:', err));
+  });
+}
+
+/* ============================ STATE ============================ */
+const separator = "=".repeat(70);
+const BIN_EXTS = [".png",".jpg",".jpeg",".gif",".ico",".pdf",".zip",".exe",".dll",".mp4",".mp3",".wav",".woff",".woff2",".ttf",".eot",".otf",".webp",".bmp",".avif",".mov",".webm",".7z",".rar",".tar",".gz",".bin",".so",".dylib",".psd",".ai",".eps",".wasm",".class",".jar",".svg"];
+const logPanel = document.getElementById('logPanel');
+const statusEl = document.getElementById('status');
+let parsedFiles = [];
+
+function log(msg, type='info'){
+  const d=document.createElement('div');
+  d.className=`log-${type}`; d.textContent=msg;
+  logPanel.appendChild(d); logPanel.scrollTop=logPanel.scrollHeight;
+}
+function clearLog(){ logPanel.innerHTML=''; }
+function setStatus(msg, state){ statusEl.textContent=msg; statusEl.className='status active '+state; }
+function hideStatus(){ statusEl.className='status'; }
+function fmtSize(n){ if(n<1024)return n+' o'; if(n<1024*1024)return (n/1024).toFixed(1)+' Ko'; return (n/1024/1024).toFixed(2)+' Mo'; }
+function resetUI(){
+  parsedFiles=[];
+  document.getElementById('treePanel').classList.remove('active');
+  document.getElementById('rebuildActions').style.display='none';
+  document.getElementById('statsRebuild').style.display='none';
+  document.getElementById('statsExtract').style.display='none';
+}
+
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.pane').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active'); document.getElementById('pane-'+t.dataset.pane).classList.add('active');
+  });
+});
+
+async function saveFile(content, filename, mime='application/octet-stream'){
+  if(window.showSaveFilePicker){
+    try{
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types:[{ description: mime.includes('zip')?'Archive ZIP':'Fichier texte', accept: mime.includes('zip')?{'application/zip':['.zip']}:{'text/plain':['.txt']} }]
+      });
+      const w = await handle.createWritable(); await w.write(content); await w.close(); return true;
+    }catch(err){
+      if(err.name==='AbortError'){ log('Enregistrement annulé.','info'); return false; }
+    }
+  }
+  const blob = content instanceof Blob ? content : new Blob([content], {type:mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000); return true;
+}
+
+async function processZip(file){
+  resetUI(); clearLog(); setStatus('Extraction en cours…','working'); log(`Fichier : ${file.name} (${fmtSize(file.size)})`,'info');
+  try{
+    const zip = await JSZip.loadAsync(file);
+    const entries = Object.values(zip.files).filter(e=>!e.dir);
+    const IGNORE = [/^node_modules\//, /^\.git\//, /^dist\//, /^build\//, /^\.DS_Store$/];
+    const kept = entries.filter(e=>!IGNORE.some(r=>r.test(e.name)));
+    let out = '', textCount = 0, binCount = 0;
+    for(const e of kept){
+      const ext = e.name.slice(e.name.lastIndexOf('.')).toLowerCase();
+      if(BIN_EXTS.includes(ext)){
+        const data = await e.async('uint8array');
+        out += `${separator}\nFICHIER IGNORE (Binaire) : ${e.name} - Taille : ${data.length} octets\n${separator}\n\n`;
+        binCount++;
+      } else {
+        const content = await e.async('string');
+        const bytes = new TextEncoder().encode(content).length;
+        out += `${separator}\nFICHIER : ${e.name}\nTAILLE : ${bytes} octets\n${separator}\n${content}${content.endsWith('\n')?'':'\n'}\n`;
+        textCount++;
+      }
+    }
+    const outName = file.name.replace(/\.zip$/i,'_export.txt');
+    if(await saveFile(out, outName, 'text/plain')){
+      setStatus('Extraction terminée ✓','done');
+      log(`SUCCÈS : ${textCount} texte, ${binCount} binaires`,'success');
+      document.getElementById('statsExtract').style.display='grid';
+      document.getElementById('sExtractText').textContent = textCount;
+      document.getElementById('sExtractBin').textContent = binCount;
+      document.getElementById('sExtractZip').textContent = fmtSize(file.size);
+      document.getElementById('sExtractTxt').textContent = fmtSize(new TextEncoder().encode(out).length);
+    }
+  }catch(err){ setStatus('Erreur','error'); log(`ERREUR : ${err.message}`,'error'); }
+}
+
+function parseDeepDial(text){
+  const lines = text.split(/\r?\n/), files = [], warnings = [], sepRe = /^={10,}$/;
+  let i = 0;
+  while(i < lines.length){
+    const line = lines[i];
+    const ig = line.match(/^FICHIER IGNORE(?:\s*\(Binaire\))?\s*:\s*(.+?)(?:\s*-\s*Taille\s*:\s*(\d+)\s*octets)?\s*$/i);
+    if(ig){ files.push({ path: ig[1].trim(), isBinary: true, declaredSize: ig[2]?parseInt(ig[2]):null }); i++; continue; }
+    const fm = line.match(/^FICHIER\s*:\s*(.+?)\s*$/);
+    if(fm){
+      const path = fm[1].trim(); let declaredSize = null; i++;
+      const tm = i<lines.length && lines[i].match(/^TAILLE\s*:\s*(\d+)\s*octets\s*$/i);
+      if(tm){ declaredSize = parseInt(tm[1]); i++; }
+      if(i<lines.length && sepRe.test(lines[i])) i++;
+      const content = [];
+      while(i<lines.length){
+        const l = lines[i];
+        if(/^FICHIER\s*:/.test(l) || /^FICHIER IGNORE/i.test(l)) break;
+        if(sepRe.test(l)){
+          let j=i+1; while(j<lines.length && lines[j].trim()==='') j++;
+          if(j<lines.length && (/^FICHIER\s*:/.test(lines[j]) || /^FICHIER IGNORE/i.test(lines[j]))){ i = j; break; }
+          content.push(l); i++; continue;
+        }
+        content.push(l); i++;
+      }
+      if(content.length>0 && content[content.length-1]==='') content.pop();
+      const joined = content.join('\n');
+      if(declaredSize!==null){
+        const actual = new TextEncoder().encode(joined).length;
+        if(Math.abs(actual-declaredSize)>10) warnings.push(`${path} : taille incohérente`);
+      }
+      files.push({ path, content: joined, isBinary: false, declaredSize });
+      continue;
+    }
+    i++;
+  }
+  return { files, warnings };
+}
+
+async function processTxt(file){
+  resetUI(); clearLog(); setStatus('Analyse du TXT…','working'); log(`Fichier : ${file.name} (${fmtSize(file.size)})`,'info');
+  try{
+    const text = await file.text();
+    const { files, warnings } = parseDeepDial(text);
+    if(files.length===0) throw new Error("Aucun bloc 'FICHIER : ' trouvé.");
+    parsedFiles = files;
+    const texts = files.filter(f=>!f.isBinary), bins = files.filter(f=>f.isBinary);
+    const totalSize = texts.reduce((s,f)=>s+new TextEncoder().encode(f.content||'').length, 0);
+    log(`Détecté : ${texts.length} texte(s), ${bins.length} binaire(s)`,'success');
+    warnings.forEach(w=>log('⚠ '+w,'warn'));
+    document.getElementById('statsRebuild').style.display='grid';
+    document.getElementById('sRebuildFiles').textContent = files.length;
+    document.getElementById('sRebuildSize').textContent = fmtSize(totalSize);
+    document.getElementById('sRebuildBin').textContent = bins.length;
+    document.getElementById('sRebuildWarn').textContent = warnings.length;
+    renderTree(files);
+    document.getElementById('rebuildActions').style.display='flex';
+    setStatus('Prêt à générer','done');
+  }catch(err){ setStatus('Erreur','error'); log(`ERREUR : ${err.message}`,'error'); }
+}
+
+function renderTree(files){
+  const sorted = [...files].sort((a,b)=>a.path.localeCompare(b.path));
+  document.getElementById('treeList').innerHTML = sorted.map(f=>{
+    const icon = f.isBinary?'📦':'📄';
+    const cls = f.isBinary?'binary':'';
+    const size = f.isBinary ? (f.declaredSize!=null?`${f.declaredSize} o`:'—') : fmtSize(new TextEncoder().encode(f.content||'').length);
+    return `<div class="tree-file"><span class="path ${cls}">${icon} ${escapeHtml(f.path)}</span><span class="size">${size}</span></div>`;
+  }).join('');
+  document.getElementById('treePanel').classList.add('active');
+}
+
+function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+document.getElementById('btnGenerate').addEventListener('click', async ()=>{
+  if(parsedFiles.length===0) return;
+  setStatus('Génération du ZIP…','working');
+  document.getElementById('btnGenerate').disabled = true;
+  try{
+    const zip = new JSZip(); let created = 0;
+    for(const f of parsedFiles){ if(!f.isBinary){ zip.file(f.path, f.content ?? ''); created++; } }
+    const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6}, platform:'UNIX' });
+    if(await saveFile(blob, 'projet_reconstruit.zip', 'application/zip')){
+      setStatus('ZIP généré ✓','done'); log(`SUCCÈS : ${created} fichier(s) écrit(s)`,'success');
+    }
+  }catch(err){ setStatus('Erreur','error'); log(`ERREUR : ${err.message}`,'error'); }
+  finally{ document.getElementById('btnGenerate').disabled = false; }
+});
+
+document.getElementById('btnCancel').addEventListener('click', ()=>{
+  resetUI(); clearLog(); hideStatus(); document.getElementById('fileTxt').value=''; log('Annulé.','info');
+});
+
+function wireDrop(zoneId, inputId, handler){
+  const zone = document.getElementById(zoneId), input = document.getElementById(inputId);
+  zone.addEventListener('dragover', e=>{e.preventDefault(); zone.classList.add('dragover');});
+  zone.addEventListener('dragleave', ()=>zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e=>{ e.preventDefault(); zone.classList.remove('dragover'); if(e.dataTransfer.files.length) handler(e.dataTransfer.files[0]); });
+  input.addEventListener('change', e=>{ if(e.target.files.length){ handler(e.target.files[0]); input.value=''; } });
+}
+wireDrop('dropZip','fileZip',processZip);
+wireDrop('dropTxt','fileTxt',processTxt);
+
+const SKILL = `# Skill : Format d'Export Projet pour "deepdial"
+
+## 1. Objectif
+
+Ce document definit le format texte strict que l'assistant IA doit utiliser pour rendre un projet complet. Ce format est lu par l'interface web DeepDial pour recreer une arborescence de fichiers et generer un fichier zip deployable.
+
+Regle d'or : L'assistant ne doit jamais renvoyer un fichier zip, un lien de telechargement, ou des fichiers individuels. Il doit renvoyer un seul fichier txt qui respecte scrupuleusement ce format.
+
+## 2. Structure du Fichier txt
+
+Le fichier est compose d'une succession de blocs. Chaque bloc represente un fichier du projet.
+
+### 2.1 En-tete d'un fichier texte
+
+    ======================================================================
+    FICHIER : chemin/relatif/du/fichier.ext
+    TAILLE : 1234 octets
+    ======================================================================
+    [CONTENU BRUT DU FICHIER ICI]
+
+- La ligne de separation est exactement 70 signes = consecutifs.
+- La ligne FICHIER : contient le chemin relatif, avec / comme separateur.
+- Le contenu est brut : pas de markdown, pas d'indentation, pas d'echappement.
+
+### 2.2 En-tete d'un fichier binaire
+
+    ======================================================================
+    FICHIER IGNORE (Binaire) : chemin/relatif/fichier.png - Taille : 5293 octets
+    ======================================================================
+
+- Mot-cle : FICHIER IGNORE (Binaire).
+- Format : chemin/fichier - Taille : N octets.
+- Aucune ligne de contenu ne suit.
+
+### 2.3 Separateur
+
+Chaque bloc est separe du suivant par exactement une ligne vide.
+
+## 3. Regles de generation
+
+1. Un seul fichier texte dans une balise txt.
+2. Separateurs de 70 =, lignes FICHIER : et TAILLE :, contenu brut.
+3. Tous les fichiers (binaires marques ignores).
+4. Ignorer node_modules/, dist/, .git/, data/.
+5. Pas de markdown dans le contenu.
+6. UTF-8 (accents et emojis).
+7. / comme separateur, jamais backslash.
+8. Tailles coherentes.
+
+## 4. Ce que l'assistant ne doit PAS faire
+
+- Fournir un zip ou un lien de telechargement.
+- Fournir les fichiers un par un.
+- Utiliser d'autres separateurs (---, ###).
+- Oublier TAILLE :.
+
+## 5. Resume express
+
+| Element | Format |
+|---------|--------|
+| Separateur | 70 signes = |
+| Fichier texte | FICHIER : chemin puis TAILLE : N octets |
+| Fichier binaire | FICHIER IGNORE (Binaire) : chemin - Taille : N octets |
+
+---
+
+Version : 1.2 - Extension DeepSeek.
+
+info 1 : si l'user demande un zip, fournis-le via ce skill (au format txt).
+info 2 : mets toujours ta reponse dans une balise txt.`;
+
+document.getElementById('btnCopySkill').addEventListener('click', async e=>{
+  const btn = e.currentTarget;
+  try{ await navigator.clipboard.writeText(SKILL); const old = btn.textContent; btn.textContent = '✅ Copié !'; setTimeout(()=>btn.textContent = old, 1800); }
+  catch(err){ alert('Copie impossible : '+err.message); }
+});
+</script>
+</body>
+</html>
