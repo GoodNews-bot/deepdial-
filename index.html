@@ -121,7 +121,6 @@ footer{margin-top:20px;padding-top:20px;border-top:1px solid var(--border);text-
 // Enregistrement du Service Worker pour la PWA
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    // On utilise './sw.js' pour être sûr qu'il cherche dans le sous-dossier
     navigator.serviceWorker.register('./sw.js')
       .then(registration => console.log('SW registered:', registration.scope))
       .catch(err => console.log('SW registration failed:', err));
@@ -134,6 +133,8 @@ const BIN_EXTS = [".png",".jpg",".jpeg",".gif",".ico",".pdf",".zip",".exe",".dll
 const logPanel = document.getElementById('logPanel');
 const statusEl = document.getElementById('status');
 let parsedFiles = [];
+let currentProjectName = null;
+let currentProjectVersion = null;
 
 function log(msg, type='info'){
   const d=document.createElement('div');
@@ -146,6 +147,8 @@ function hideStatus(){ statusEl.className='status'; }
 function fmtSize(n){ if(n<1024)return n+' o'; if(n<1024*1024)return (n/1024).toFixed(1)+' Ko'; return (n/1024/1024).toFixed(2)+' Mo'; }
 function resetUI(){
   parsedFiles=[];
+  currentProjectName=null;
+  currentProjectVersion=null;
   document.getElementById('treePanel').classList.remove('active');
   document.getElementById('rebuildActions').style.display='none';
   document.getElementById('statsRebuild').style.display='none';
@@ -187,6 +190,11 @@ async function processZip(file){
     const IGNORE = [/^node_modules\//, /^\.git\//, /^dist\//, /^build\//, /^\.DS_Store$/];
     const kept = entries.filter(e=>!IGNORE.some(r=>r.test(e.name)));
     let out = '', textCount = 0, binCount = 0;
+    
+    // On essaie de deviner le nom du projet depuis le nom du fichier ZIP
+    const guessedName = file.name.replace(/\.zip$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    out += `PROJET : ${guessedName}\nVERSION : 1.0.0\n\n`;
+
     for(const e of kept){
       const ext = e.name.slice(e.name.lastIndexOf('.')).toLowerCase();
       if(BIN_EXTS.includes(ext)){
@@ -215,7 +223,22 @@ async function processZip(file){
 
 function parseDeepDial(text){
   const lines = text.split(/\r?\n/), files = [], warnings = [], sepRe = /^={10,}$/;
+  let projectName = null, projectVersion = null;
   let i = 0;
+
+  // 1. Extraction du nom et de la version
+  while(i < lines.length){
+    const line = lines[i].trim();
+    const pm = line.match(/^PROJET\s*:\s*(.+)$/i);
+    const vm = line.match(/^VERSION\s*:\s*(.+)$/i);
+    if(pm) projectName = pm[1].trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    else if(vm) projectVersion = vm[1].trim().replace(/[^a-zA-Z0-9_.-]/g, '_');
+    
+    if (/^FICHIER\s*:/i.test(line) || /^FICHIER IGNORE/i.test(line) || sepRe.test(line)) break;
+    i++;
+  }
+
+  // 2. Lecture des fichiers
   while(i < lines.length){
     const line = lines[i];
     const ig = line.match(/^FICHIER IGNORE(?:\s*\(Binaire\))?\s*:\s*(.+?)(?:\s*-\s*Taille\s*:\s*(\d+)\s*octets)?\s*$/i);
@@ -248,18 +271,27 @@ function parseDeepDial(text){
     }
     i++;
   }
-  return { files, warnings };
+  return { files, warnings, projectName, projectVersion };
 }
 
 async function processTxt(file){
   resetUI(); clearLog(); setStatus('Analyse du TXT…','working'); log(`Fichier : ${file.name} (${fmtSize(file.size)})`,'info');
   try{
     const text = await file.text();
-    const { files, warnings } = parseDeepDial(text);
+    const { files, warnings, projectName, projectVersion } = parseDeepDial(text);
     if(files.length===0) throw new Error("Aucun bloc 'FICHIER : ' trouvé.");
+    
     parsedFiles = files;
+    currentProjectName = projectName;
+    currentProjectVersion = projectVersion;
+
     const texts = files.filter(f=>!f.isBinary), bins = files.filter(f=>f.isBinary);
     const totalSize = texts.reduce((s,f)=>s+new TextEncoder().encode(f.content||'').length, 0);
+    
+    if (currentProjectName) {
+      log(`Projet détecté : ${currentProjectName} (v${currentProjectVersion || '?'})`, 'info');
+    }
+
     log(`Détecté : ${texts.length} texte(s), ${bins.length} binaire(s)`,'success');
     warnings.forEach(w=>log('⚠ '+w,'warn'));
     document.getElementById('statsRebuild').style.display='grid';
@@ -294,8 +326,17 @@ document.getElementById('btnGenerate').addEventListener('click', async ()=>{
     const zip = new JSZip(); let created = 0;
     for(const f of parsedFiles){ if(!f.isBinary){ zip.file(f.path, f.content ?? ''); created++; } }
     const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6}, platform:'UNIX' });
-    if(await saveFile(blob, 'projet_reconstruit.zip', 'application/zip')){
-      setStatus('ZIP généré ✓','done'); log(`SUCCÈS : ${created} fichier(s) écrit(s)`,'success');
+    
+    // Construction du nom du ZIP
+    let filename = 'projet_reconstruit';
+    if (currentProjectName) {
+      filename = currentProjectName;
+      if (currentProjectVersion) filename += '_' + currentProjectVersion;
+    }
+    filename += '.zip';
+
+    if(await saveFile(blob, filename, 'application/zip')){
+      setStatus('ZIP généré ✓','done'); log(`SUCCÈS : ${created} fichier(s) écrit(s) dans ${filename}`,'success');
     }
   }catch(err){ setStatus('Erreur','error'); log(`ERREUR : ${err.message}`,'error'); }
   finally{ document.getElementById('btnGenerate').disabled = false; }
@@ -325,9 +366,16 @@ Regle d'or : L'assistant ne doit jamais renvoyer un fichier zip, un lien de tele
 
 ## 2. Structure du Fichier txt
 
-Le fichier est compose d'une succession de blocs. Chaque bloc represente un fichier du projet.
+Le fichier est compose d'un en-tete de projet (optionnel mais recommande), suivi d'une succession de blocs.
 
-### 2.1 En-tete d'un fichier texte
+### 2.1 En-tete du projet (NOUVEAU)
+Au tout debut du fichier, avant le premier bloc, ajoute ces deux lignes :
+PROJET : [Nom du projet sans espaces]
+VERSION : [Numero de version, ex: 1.0.0]
+
+(Laisser une ligne vide apres la version)
+
+### 2.2 En-tete d'un fichier texte
 
     ======================================================================
     FICHIER : chemin/relatif/du/fichier.ext
@@ -339,7 +387,7 @@ Le fichier est compose d'une succession de blocs. Chaque bloc represente un fich
 - La ligne FICHIER : contient le chemin relatif, avec / comme separateur.
 - Le contenu est brut : pas de markdown, pas d'indentation, pas d'echappement.
 
-### 2.2 En-tete d'un fichier binaire
+### 2.3 En-tete d'un fichier binaire
 
     ======================================================================
     FICHIER IGNORE (Binaire) : chemin/relatif/fichier.png - Taille : 5293 octets
@@ -349,7 +397,7 @@ Le fichier est compose d'une succession de blocs. Chaque bloc represente un fich
 - Format : chemin/fichier - Taille : N octets.
 - Aucune ligne de contenu ne suit.
 
-### 2.3 Separateur
+### 2.4 Separateur
 
 Chaque bloc est separe du suivant par exactement une ligne vide.
 
@@ -378,10 +426,17 @@ Chaque bloc est separe du suivant par exactement une ligne vide.
 | Separateur | 70 signes = |
 | Fichier texte | FICHIER : chemin puis TAILLE : N octets |
 | Fichier binaire | FICHIER IGNORE (Binaire) : chemin - Taille : N octets |
+| En-tete Projet | PROJET : Nom / VERSION : X.X |
+
+## 6. Fichiers volumineux (IMPORTANT)
+
+Si un fichier ou le projet entier depasse ~25 000 caracteres, les interfaces de chat tronquent souvent le message. Pour eviter de perdre des donnees :
+- Decoupe le contenu en plusieurs fichiers virtuels (ex: \`src/app_part1.txt\`, \`src/app_part2.txt\`).
+- Indique clairement dans chaque fichier qu'il s'agit d'une partie.
 
 ---
 
-Version : 1.2 - Extension DeepSeek.
+Version : 1.4 - Extension DeepSeek.
 
 info 1 : si l'user demande un zip, fournis-le via ce skill (au format txt).
 info 2 : mets toujours ta reponse dans une balise txt.`;
